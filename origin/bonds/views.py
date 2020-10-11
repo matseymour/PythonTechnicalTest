@@ -1,15 +1,8 @@
 from rest_framework import mixins, viewsets
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-from rest_framework.response import Response
 
 from bonds.models import Bond
 from bonds.serializers import BondSerializer
-
-
-class HelloWorld(APIView):
-    def get(self, request):
-        return Response("Hello World!")
 
 
 class BondViewSet(mixins.CreateModelMixin,
