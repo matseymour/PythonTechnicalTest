@@ -1,15 +1,18 @@
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
+import requests
 from django.urls import reverse
 from factory_djoy import UserFactory
 from rest_framework.test import APISimpleTestCase, APITestCase
 
+from bonds.lib import GleifClient
 from bonds.models import Bond
 
 
 class HelloWorld(APISimpleTestCase):
     def test_root(self):
-        resp = self.client.get("/")
+        resp = self.client.get('/')
         assert resp.status_code == 200
 
 
@@ -28,7 +31,7 @@ class AuthenticateTest(APITestCase):
         self.assertIn('token', resp.json())
 
     def test_unknown_credentials(self):
-        resp = self.client.post(self.url, data={'username': "foo", 'password': "bar"})
+        resp = self.client.post(self.url, data={'username': 'foo', 'password': 'bar'})
 
         self.assertEqual(400, resp.status_code)
 
@@ -46,9 +49,9 @@ class BondTest(APITestCase):
     def _get_dummy_bond_data(cls):
         cls.bond_count += 1
         return {
-            "isin": f"FR{cls.bond_count:010d}", "currency": "EUR",
-            "size": 100000000, "maturity": datetime.now().strftime("%Y-%m-%d"),
-            "lei": "R0MUWSFPU8MPRO8K5P83"
+            'isin': f'FR{cls.bond_count:010d}', 'currency': 'EUR',
+            'size': 100000000, 'maturity': datetime.now().strftime('%Y-%m-%d'),
+            'lei': 'R0MUWSFPU8MPRO8K5P83'
         }
 
 
@@ -102,12 +105,8 @@ class GetBondsTest(BondTest):
         self.assertEqual(2, len(data))
 
 
+@patch.object(GleifClient, 'getLegalName', new=MagicMock(return_value='BNPPARIBAR'))
 class CreateBondTest(BondTest):
-
-    def setUp(self):
-        super(CreateBondTest, self).setUp()
-        self.user = UserFactory()
-        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.user.auth_token}')
 
     def test_successful(self):
 
@@ -118,9 +117,10 @@ class CreateBondTest(BondTest):
         self.assertEqual(201, resp.status_code)
         bond_obj = Bond.objects.get(isin=resp.json()['isin'])
         self.assertEqual(self.user, bond_obj.owner)
-        self.assertEqual(new_bond_data['maturity'], bond_obj.maturity.strftime("%Y-%m-%d"))
+        self.assertEqual(new_bond_data['maturity'], bond_obj.maturity.strftime('%Y-%m-%d'))
         for field in ['isin', 'size', 'currency', 'lei']:
             self.assertEqual(new_bond_data[field], getattr(bond_obj, field))
+        self.assertEqual('BNPPARIBAR', bond_obj.legal_name)
 
     def test_fields_missing(self):
 
@@ -161,3 +161,55 @@ class CreateBondTest(BondTest):
             'currency': ['Ensure this field has no more than 3 characters.'],
             'lei': ['Ensure this field has no more than 20 characters.']
         }, resp.json())
+
+
+class GleifIntegrationTest(BondTest):
+
+    def test_successful(self):
+
+        new_bond_data = self._get_dummy_bond_data()
+        resp = self.client.post(self.url, data=new_bond_data)
+        self.assertEqual(201, resp.status_code)
+
+        resp = self.client.get(self.url)
+        self.assertEqual(200, resp.status_code)
+        new_bond_data['legal_name'] = 'BNPPARIBAS'
+        self.assertEqual([new_bond_data], resp.json()['results'])
+
+
+@patch('bonds.lib.logger')
+class GleifErrorsTest(BondTest):
+
+    @patch('bonds.lib.requests.get', new=MagicMock(side_effect=requests.ReadTimeout('Timeout')))
+    def test_read_timeout(self, _logger):
+
+        new_bond_data = self._get_dummy_bond_data()
+
+        resp = self.client.post(self.url, data=new_bond_data)
+        self.assertEqual(504, resp.status_code)
+        self.assertEqual({'detail': 'A server error occurred.'}, resp.json())
+        _logger.error.assert_called_once_with('ReadTimeout for upstream request (_leiLookup)')
+
+    @patch('bonds.lib.requests.get', new=MagicMock(return_value=MagicMock(status_code=503)))
+    def test_error_status_code(self, _logger):
+
+        new_bond_data = self._get_dummy_bond_data()
+
+        resp = self.client.post(self.url, data=new_bond_data)
+        self.assertEqual(500, resp.status_code)
+        self.assertEqual({'detail': 'A server error occurred.'}, resp.json())
+        _logger.error.assert_called_once_with(
+            'Status code 503 for upstream request (_leiLookup)'
+        )
+
+    @patch('bonds.lib.requests.get', new=MagicMock(side_effect=Exception('foo')))
+    def test_unhandled_exception(self, _logger):
+
+        new_bond_data = self._get_dummy_bond_data()
+
+        resp = self.client.post(self.url, data=new_bond_data)
+        self.assertEqual(500, resp.status_code)
+        self.assertEqual({'detail': 'A server error occurred.'}, resp.json())
+        _logger.exception.assert_called_once_with(
+            'Unhandled exception for upstream request (_leiLookup)'
+        )
