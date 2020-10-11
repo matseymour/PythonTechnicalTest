@@ -15,6 +15,9 @@ def create_auth_token(sender, instance=None, created=False, **kwargs):
 
 class Bond(models.Model):
 
+    def __str__(self):
+        return f'{self.isin}-{self.lei}'
+
     owner = models.ForeignKey(User, CASCADE)
     isin = models.CharField(max_length=12)
     size = models.IntegerField()

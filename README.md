@@ -55,3 +55,22 @@ We would also like to be able to add a filter such as:
 `GET /bonds/?legal_name=BNPPARIBAS`
 
 to reduce down the results.
+
+#### Testing
+
+Be sure to install the updated deps in requirements.txt and requirements-dev.txt
+
+~~~
+$ pip install -r requirements.txt
+$ pip install -r requirements-dev.txt
+~~~
+
+The database has been pre-loaded with a test user 'mat'. Token authentication is being used, for example:
+
+~~~
+>>> import requests
+>>> resp = requests.post('http://localhost:8000/api-token-auth/', data={'username': 'mat', 'password': 'pa55word'})
+>>> resp.json()
+{u'token': <token>}
+>>> requests.post('http://localhost:8002/bonds/', data={'isin': 'FR0000131104', 'size': 100000000, 'currency': 'EUR', 'maturity': '2025-02-28', 'lei': 'R0MUWSFPU8MPRO8K5P83'}, headers={'AUTHORIZATION': 'Token <token>'})
+~~~
